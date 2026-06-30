@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>VOID — Gyro Album Demo</title>
+<style>
+  /* ============================================================
+     ROOT / RESET
+  ============================================================ */
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: #000000;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: #eaeaea;
+    touch-action: none;
+  }
+
+  /* ============================================================
+     BACKGROUND — soft radial glow + faint particles
+  ============================================================ */
+  #bg {
+    position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(circle at 50% 38%, rgba(255,123,38,0.10), rgba(0,0,0,0) 45%),
+      radial-gradient(circle at 50% 70%, rgba(40,40,60,0.18), rgba(0,0,0,0) 60%),
+      #000000;
+  }
+  #particles {
+    position: fixed; inset: 0; z-index: 1; pointer-events: none;
+  }
+  .particle {
+    position: absolute;
+    width: 2px; height: 2px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.35);
+    filter: blur(0.5px);
+    animation: floatParticle linear infinite;
+  }
+  @keyframes floatParticle {
+    0%   { transform: translateY(0) translateX(0); opacity: 0; }
+    10%  { opacity: 0.6; }
+    90%  { opacity: 0.4; }
+    100% { transform: translateY(-120vh) translateX(10px); opacity: 0; }
+  }
+
+  /* ============================================================
+     LAYOUT
+  ============================================================ */
+  .app {
+    position: relative; z-index: 2;
+    width: 100%; height: 100%;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+  }
+
+  .topbar {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 5;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 18px 16px 0 16px;
+    gap: 6px;
+  }
+  .brand {
+    font-size: 12px;
+    letter-spacing: 4px;
+    color: #ff7b26;
+    font-weight: 600;
+    opacity: 0.85;
+  }
+  .mode-indicator {
+    font-size: 11px;
+    color: #888;
+    letter-spacing: 1px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .mode-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: #ff7b26;
+    box-shadow: 0 0 6px #ff7b26;
+  }
+
+  /* ============================================================
+     STAGE — perspective container for the album
+  ============================================================ */
+  .stage {
+    width: min(72vw, 360px);
+    height: min(72vw, 360px);
+    perspective: 1000px; /* depth, controlled by JS via --persp */
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+  }
+
+  /* shadow that lives beneath the card, moves opposite tilt */
+  .shadow-blob {
+    position: absolute;
+    width: 80%; height: 80%;
+    bottom: -10%;
+    border-radius: 24px;
+    background: radial-gradient(ellipse at center, rgba(0,0,0,0.65), rgba(0,0,0,0) 70%);
+    filter: blur(18px);
+    transform: translate3d(0,0,0) scale(1);
+    z-index: 0;
+    transition: none;
+  }
+
+  /* the floating card itself */
+  .card-wrap {
+    width: 100%; height: 100%;
+    position: relative;
+    z-index: 2;
+    transform-style: preserve-3d;
+    will-change: transform;
+  }
+
+  .album-card {
+    width: 100%; height: 100%;
+    border-radius: 22px;
+    position: relative;
+    transform-style: preserve-3d;
+    background: linear-gradient(145deg, #161616, #0a0a0a);
+    box-shadow:
+      0 2px 8px rgba(0,0,0,0.6),
+      0 20px 60px rgba(0,0,0,0.55),
+      inset 0 0 0 1px rgba(255,255,255,0.04);
+    overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .album-art {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transform: scale(0.9);
+    transition: opacity 0.6s ease, transform 0.6s cubic-bezier(.2,.8,.2,1);
+    pointer-events: none;
+  }
+  .album-art.loaded { opacity: 1; transform: scale(1); }
+
+  .placeholder-icon {
+    position: absolute;
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column;
+    gap: 10px;
+    color: #3a3a3a;
+    transition: opacity 0.4s ease;
+  }
+  .placeholder-icon svg { width: 56px; height: 56px; opacity: 0.5; }
+  .placeholder-icon span { font-size: 11px; letter-spacing: 2px; color: #444; }
+
+  /* glossy reflection sweep — glass-like, moves with tilt */
+  .reflection {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    z-index: 3;
+    background: linear-gradient(
+      120deg,
+      rgba(255,255,255,0) 30%,
+      rgba(255,255,255,0.16) 45%,
+      rgba(255,255,255,0.05) 52%,
+      rgba(255,255,255,0) 65%
+    );
+    mix-blend-mode: screen;
+    will-change: transform;
+  }
+
+  /* subtle top sheen for glass feel */
+  .sheen {
+    position: absolute; inset: 0;
+    border-radius: 22px;
+    pointer-events: none;
+    z-index: 4;
+    background: linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(255,255,255,0) 30%);
+  }
+
+  /* ambient glow ring behind card that pulses on load */
+  .glow {
+    position: absolute; inset: -14%;
+    border-radius: 32px;
+    z-index: 1;
+    background: radial-gradient(circle, rgba(255,123,38,0.0) 60%, rgba(255,123,38,0) 100%);
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    pointer-events: none;
+  }
+  .glow.active { opacity: 1; background: radial-gradient(circle, rgba(255,123,38,0.16) 0%, rgba(255,123,38,0) 70%); }
+
+  /* ============================================================
+     CONTROLS — upload / reset buttons
+  ============================================================ */
+  .controls {
+    position: fixed;
+    bottom: 26px; left: 0; right: 0;
+    z-index: 5;
+    display: flex; justify-content: center;
+    gap: 12px;
+    padding: 0 16px;
+  }
+  .btn {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.10);
+    color: #eee;
+    padding: 11px 18px;
+    border-radius: 30px;
+    font-size: 12.5px;
+    letter-spacing: 0.5px;
+    backdrop-filter: blur(10px);
+    display: flex; align-items: center; gap: 6px;
+    cursor: pointer;
+    transition: background 0.2s ease, transform 0.15s ease;
+  }
+  .btn:active { transform: scale(0.95); }
+  .btn.primary {
+    background: linear-gradient(135deg, #ff7b26, #ff5b1f);
+    border: none;
+    color: #1a0a00;
+    font-weight: 600;
+    box-shadow: 0 4px 18px rgba(255,123,38,0.35);
+  }
+  .btn svg { width: 14px; height: 14px; }
+
+  /* ============================================================
+     SETTINGS PANEL (sliders)
+  ============================================================ */
+  .settings-toggle {
+    position: fixed;
+    top: 18px; right: 16px;
+    z-index: 6;
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+  }
+  .settings-toggle svg { width: 16px; height: 16px; stroke: #ccc; }
+
+  .settings-panel {
+    position: fixed;
+    top: 0; right: 0;
+    width: min(78vw, 280px);
+    height: 100%;
+    z-index: 10;
+    background: rgba(10,10,10,0.92);
+    backdrop-filter: blur(16px);
+    border-left: 1px solid rgba(255,255,255,0.07);
+    padding: 70px 20px 20px 20px;
+    transform: translateX(100%);
+    transition: transform 0.35s cubic-bezier(.2,.8,.2,1);
+    display: flex; flex-direction: column; gap: 22px;
+  }
+  .settings-panel.open { transform: translateX(0); }
+
+  .settings-panel h3 {
+    margin: 0 0 4px 0; font-size: 13px; letter-spacing: 1.5px; color: #ff7b26;
+  }
+  .panel-close {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.1);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .panel-close svg { width: 14px; height: 14px; stroke: #ccc; }
+  .panel-close:active { transform: scale(0.92); }
+  .slider-group { display: flex; flex-direction: column; gap: 8px; }
+  .slider-label {
+    display: flex; justify-content: space-between;
+    font-size: 11.5px; color: #aaa;
+  }
+  input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%; height: 4px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.12);
+    outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px; height: 16px;
+    border-radius: 50%;
+    background: #ff7b26;
+    box-shadow: 0 0 8px rgba(255,123,38,0.6);
+    cursor: pointer;
+    margin-top: -6px;
+  }
+
+  .force-desktop-row {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; color: #ccc;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+  }
+  .switch {
+    width: 38px; height: 22px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.12);
+    position: relative;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+  .switch.on { background: #ff7b26; }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.2s ease;
+  }
+  .switch.on::after { transform: translateX(16px); }
+
+  .perm-btn {
+    margin-top: 4px;
+    font-size: 11.5px;
+    color: #ff7b26;
+    border: 1px solid rgba(255,123,38,0.4);
+    border-radius: 8px;
+    padding: 8px;
+    text-align: center;
+    cursor: pointer;
+  }
+
+  /* ============================================================
+     VIRTUAL JOYSTICK (desktop / forced-desktop mode)
+  ============================================================ */
+  .joystick-wrap {
+    position: fixed;
+    bottom: 26px; right: 26px;
+    z-index: 6;
+    width: 110px; height: 110px;
+    border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, rgba(40,40,40,0.55), rgba(10,10,10,0.65));
+    border: 1px solid rgba(255,123,38,0.25);
+    box-shadow: 0 0 24px rgba(255,123,38,0.08), inset 0 0 18px rgba(0,0,0,0.6);
+    backdrop-filter: blur(6px);
+    display: none;
+    align-items: center; justify-content: center;
+    touch-action: none;
+  }
+  .joystick-wrap.visible { display: flex; }
+  .joystick-ring {
+    position: absolute; inset: 8px;
+    border-radius: 50%;
+    border: 1px dashed rgba(255,123,38,0.18);
+  }
+  .joystick-knob {
+    width: 42px; height: 42px;
+    border-radius: 50%;
+    background: linear-gradient(145deg, #ff8b3d, #ff5b1f);
+    box-shadow: 0 4px 14px rgba(255,91,31,0.5);
+    position: relative;
+    will-change: transform;
+  }
+  .joystick-label {
+    position: absolute;
+    bottom: -20px;
+    font-size: 9px;
+    letter-spacing: 1.5px;
+    color: #ff7b26;
+    opacity: 0.7;
+    white-space: nowrap;
+  }
+
+  input[type="file"] { display: none; }
+
+  /* ============================================================
+     DEBUG OVERLAY
+  ============================================================ */
+  .debug-toggle {
+    position: fixed;
+    bottom: 26px; left: 16px;
+    z-index: 7;
+    font-size: 10px;
+    letter-spacing: 1px;
+    color: #888;
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 6px;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.04);
+    cursor: pointer;
+  }
+  .debug-overlay {
+    position: fixed;
+    top: 70px; left: 12px;
+    z-index: 7;
+    background: rgba(0,0,0,0.85);
+    border: 1px solid rgba(255,123,38,0.3);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 10.5px;
+    line-height: 1.6;
+    color: #ccc;
+    font-family: 'SF Mono', 'Courier New', monospace;
+    display: none;
+    max-width: 220px;
+  }
+  .debug-overlay.open { display: block; }
+  .debug-overlay span { color: #ff7b26; }
+</style>
+</head>
+<body>
+
+<!-- BACKGROUND LAYERS -->
+<div id="bg"></div>
+<div id="particles"></div>
+
+<div class="app">
+
+  <!-- TOP BAR: brand + mode indicator -->
+  <div class="topbar">
+    <div class="brand">VOID</div>
+    <div class="mode-indicator">
+      <span class="mode-dot"></span>
+      <span id="modeText">Detecting input mode…</span>
+    </div>
+  </div>
+
+  <!-- SETTINGS TOGGLE -->
+  <div class="settings-toggle" id="settingsToggle">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+    </svg>
+  </div>
+
+  <!-- SETTINGS PANEL -->
+  <div class="settings-panel" id="settingsPanel">
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <h3 style="margin:0;">STAGE SETTINGS</h3>
+      <div class="panel-close" id="panelClose">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </div>
+    </div>
+
+    <div class="slider-group">
+      <div class="slider-label"><span>Tilt Sensitivity</span><span id="valSens">1.0</span></div>
+      <input type="range" id="sensSlider" min="0.2" max="2.5" step="0.05" value="1">
+    </div>
+
+    <div class="slider-group">
+      <div class="slider-label"><span>Float Intensity</span><span id="valFloat">1.0</span></div>
+      <input type="range" id="floatSlider" min="0" max="2.5" step="0.05" value="1">
+    </div>
+
+    <div class="slider-group">
+      <div class="slider-label"><span>Perspective Depth</span><span id="valPersp">1000</span></div>
+      <input type="range" id="perspSlider" min="500" max="2000" step="10" value="1000">
+    </div>
+
+    <div class="slider-group">
+      <div class="slider-label"><span>Shadow Strength</span><span id="valShadow">1.0</span></div>
+      <input type="range" id="shadowSlider" min="0" max="2.5" step="0.05" value="1">
+    </div>
+
+    <div class="force-desktop-row">
+      <span>Force Desktop Mode</span>
+      <div class="switch" id="forceDesktopSwitch"></div>
+    </div>
+
+    <div class="perm-btn" id="permBtn" style="display:none;">Enable Gyroscope Access</div>
+  </div>
+
+  <!-- MAIN STAGE -->
+  <div class="stage" id="stage">
+    <div class="glow" id="glow"></div>
+    <div class="shadow-blob" id="shadowBlob"></div>
+
+    <div class="card-wrap" id="cardWrap">
+      <div class="album-card" id="albumCard">
+        <div class="placeholder-icon" id="placeholder">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9"></circle>
+            <circle cx="12" cy="12" r="2.4"></circle>
+          </svg>
+          <span>NO ALBUM LOADED</span>
+        </div>
+        <img class="album-art" id="albumArt" alt="Album Art">
+        <div class="sheen"></div>
+        <div class="reflection" id="reflection"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- BOTTOM CONTROLS -->
+  <div class="controls">
+    <label class="btn primary" id="uploadBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+      Upload Image
+      <input type="file" id="fileInput" accept="image/*">
+    </label>
+    <div class="btn" id="resetBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+      Reset
+    </div>
+  </div>
+
+  <!-- VIRTUAL JOYSTICK -->
+  <div class="joystick-wrap" id="joystickWrap">
+    <div class="joystick-ring"></div>
+    <div class="joystick-knob" id="joystickKnob"></div>
+    <div class="joystick-label">JOYSTICK</div>
+  </div>
+
+  <!-- DEBUG OVERLAY -->
+  <div class="debug-overlay" id="debugOverlay">
+    <div>protocol: <span id="dbgProtocol">-</span></div>
+    <div>DeviceOrientationEvent: <span id="dbgSupport">-</span></div>
+    <div>requestPermission fn: <span id="dbgPermFn">-</span></div>
+    <div>events fired: <span id="dbgCount">0</span></div>
+    <div>beta: <span id="dbgBeta">-</span></div>
+    <div>gamma: <span id="dbgGamma">-</span></div>
+    <div>alpha: <span id="dbgAlpha">-</span></div>
+    <div>absolute: <span id="dbgAbs">-</span></div>
+  </div>
+  <div class="debug-toggle" id="debugToggle">DEBUG</div>
+
+</div>
+
+<script>
+/* ============================================================
+   STATE
+============================================================ */
+const state = {
+  // raw target tilt values (degrees), set by gyro or joystick
+  targetX: 0,
+  targetY: 0,
+  // current interpolated tilt values (degrees) - smoothed
+  curX: 0,
+  curY: 0,
+  // settings
+  sensitivity: 1.0,
+  floatIntensity: 1.0,
+  perspective: 1000,
+  shadowStrength: 1.0,
+  // mode
+  usingGyro: false,
+  forceDesktop: false,
+  // breathing / float clock
+  t: 0
+};
+
+const MAX_TILT = 10; // degrees, per spec
+
+/* ============================================================
+   DOM REFS
+============================================================ */
+const stage        = document.getElementById('stage');
+const cardWrap      = document.getElementById('cardWrap');
+const albumCard     = document.getElementById('albumCard');
+const reflection    = document.getElementById('reflection');
+const shadowBlob    = document.getElementById('shadowBlob');
+const glow          = document.getElementById('glow');
+const modeText      = document.getElementById('modeText');
+const fileInput     = document.getElementById('fileInput');
+const albumArt      = document.getElementById('albumArt');
+const placeholder   = document.getElementById('placeholder');
+const resetBtn      = document.getElementById('resetBtn');
+const joystickWrap  = document.getElementById('joystickWrap');
+const joystickKnob  = document.getElementById('joystickKnob');
+const settingsToggle= document.getElementById('settingsToggle');
+const settingsPanel = document.getElementById('settingsPanel');
+const forceSwitch   = document.getElementById('forceDesktopSwitch');
+const permBtn       = document.getElementById('permBtn');
+
+const sensSlider   = document.getElementById('sensSlider');
+const floatSlider  = document.getElementById('floatSlider');
+const perspSlider  = document.getElementById('perspSlider');
+const shadowSlider = document.getElementById('shadowSlider');
+const valSens   = document.getElementById('valSens');
+const valFloat  = document.getElementById('valFloat');
+const valPersp  = document.getElementById('valPersp');
+const valShadow = document.getElementById('valShadow');
+
+/* ============================================================
+   BACKGROUND PARTICLES
+============================================================ */
+function spawnParticles() {
+  const container = document.getElementById('particles');
+  const count = 28;
+  for (let i = 0; i < count; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const size = (Math.random() * 1.5 + 1).toFixed(1);
+    p.style.width = size + 'px';
+    p.style.height = size + 'px';
+    p.style.left = Math.random() * 100 + 'vw';
+    p.style.top = (50 + Math.random() * 50) + 'vh';
+    const duration = (Math.random() * 14 + 14).toFixed(1);
+    const delay = (Math.random() * -20).toFixed(1);
+    p.style.animationDuration = duration + 's';
+    p.style.animationDelay = delay + 's';
+    container.appendChild(p);
+  }
+}
+spawnParticles();
+
+/* ============================================================
+   SETTINGS PANEL TOGGLE
+============================================================ */
+settingsToggle.addEventListener('click', () => {
+  settingsPanel.classList.toggle('open');
+});
+document.getElementById('panelClose').addEventListener('click', () => {
+  settingsPanel.classList.remove('open');
+});
+
+sensSlider.addEventListener('input', () => {
+  state.sensitivity = parseFloat(sensSlider.value);
+  valSens.textContent = state.sensitivity.toFixed(2);
+});
+floatSlider.addEventListener('input', () => {
+  state.floatIntensity = parseFloat(floatSlider.value);
+  valFloat.textContent = state.floatIntensity.toFixed(2);
+});
+perspSlider.addEventListener('input', () => {
+  state.perspective = parseFloat(perspSlider.value);
+  valPersp.textContent = state.perspective.toFixed(0);
+  stage.style.perspective = state.perspective + 'px';
+});
+shadowSlider.addEventListener('input', () => {
+  state.shadowStrength = parseFloat(shadowSlider.value);
+  valShadow.textContent = state.shadowStrength.toFixed(2);
+});
+
+/* ============================================================
+   DEBUG OVERLAY
+============================================================ */
+const debugOverlay = document.getElementById('debugOverlay');
+const debugToggle  = document.getElementById('debugToggle');
+const dbg = {
+  protocol: document.getElementById('dbgProtocol'),
+  support:  document.getElementById('dbgSupport'),
+  permFn:   document.getElementById('dbgPermFn'),
+  count:    document.getElementById('dbgCount'),
+  beta:     document.getElementById('dbgBeta'),
+  gamma:    document.getElementById('dbgGamma'),
+  alpha:    document.getElementById('dbgAlpha'),
+  abs:      document.getElementById('dbgAbs'),
+};
+let eventFireCount = 0;
+
+debugToggle.addEventListener('click', () => {
+  debugOverlay.classList.toggle('open');
+});
+
+dbg.protocol.textContent = location.protocol;
+dbg.support.textContent = (typeof DeviceOrientationEvent !== 'undefined') ? 'yes' : 'NO';
+dbg.permFn.textContent = (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') ? 'yes (iOS-style)' : 'no';
+
+function updateDebugFromEvent(event) {
+  eventFireCount++;
+  dbg.count.textContent = eventFireCount;
+  dbg.beta.textContent  = event.beta  === null ? 'null' : event.beta.toFixed(2);
+  dbg.gamma.textContent = event.gamma === null ? 'null' : event.gamma.toFixed(2);
+  dbg.alpha.textContent = event.alpha === null ? 'null' : event.alpha.toFixed(2);
+  dbg.abs.textContent   = String(event.absolute);
+}
+
+/* ============================================================
+   MODE DETECTION: gyro vs joystick
+============================================================ */
+function isMobileUA() {
+  return /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+function updateModeUI() {
+  const useGyro = state.usingGyro && !state.forceDesktop;
+  modeText.textContent = useGyro ? 'Gyroscope Active' : 'Mouse / Joystick Active';
+  joystickWrap.classList.toggle('visible', !useGyro);
+}
+
+forceSwitch.addEventListener('click', () => {
+  state.forceDesktop = !state.forceDesktop;
+  forceSwitch.classList.toggle('on', state.forceDesktop);
+  // reset target when switching modes
+  state.targetX = 0; state.targetY = 0;
+  resetJoystickKnob();
+  updateModeUI();
+});
+
+/* ============================================================
+   GYROSCOPE HANDLING
+============================================================ */
+function handleOrientation(event) {
+  if (state.forceDesktop) return;
+  // beta: front-back tilt (-180 to 180), gamma: left-right tilt (-90 to 90)
+  let beta = event.beta || 0;   // forward/back
+  let gamma = event.gamma || 0; // left/right
+
+  // clamp to a comfortable natural range before mapping to MAX_TILT
+  const clampedGamma = Math.max(-45, Math.min(45, gamma));
+  const clampedBeta  = Math.max(-45, Math.min(45, beta - 35)); // assume ~35deg natural hold angle
+
+  const mappedY = (clampedGamma / 45) * MAX_TILT; // left/right -> rotateY
+  const mappedX = (clampedBeta / 45) * MAX_TILT;  // forward/back -> rotateX
+
+  state.targetX = -mappedX * state.sensitivity;
+  state.targetY = mappedY * state.sensitivity;
+}
+
+let gyroConfirmed = false; // true once we actually receive non-null orientation data
+let gyroWatchTimer = null;
+
+function handleOrientationProbe(event) {
+  updateDebugFromEvent(event);
+  // Some browsers (incl. Chrome/Android in certain states) fire the event
+  // with all-null values when motion isn't actually available/granted.
+  if (event.beta !== null || event.gamma !== null) {
+    gyroConfirmed = true;
+    state.usingGyro = true;
+    updateModeUI();
+    if (gyroWatchTimer) { clearTimeout(gyroWatchTimer); gyroWatchTimer = null; }
+  }
+  handleOrientation(event);
+}
+
+function enableGyro() {
+  window.addEventListener('deviceorientation', handleOrientationProbe, true);
+  // If we don't get real data within 1.5s, assume it's blocked (insecure
+  // context, hardware absent, or silently denied) and fall back to joystick.
+  gyroWatchTimer = setTimeout(() => {
+    if (!gyroConfirmed) {
+      state.usingGyro = false;
+      const insecure = location.protocol !== 'https:' && location.hostname !== 'localhost';
+      modeText.textContent = insecure
+        ? 'Gyroscope needs HTTPS — using joystick'
+        : 'No motion data detected — using joystick';
+      updateModeUI();
+    }
+  }, 1500);
+}
+
+function requestMotionPermission() {
+  if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+    // iOS 13+ (and some newer Android/Chrome builds) require an explicit
+    // permission grant triggered by a real user gesture.
+    DeviceOrientationEvent.requestPermission().then(res => {
+      if (res === 'granted') {
+        permBtn.style.display = 'none';
+        enableGyro();
+      } else {
+        modeText.textContent = 'Gyroscope permission denied — using joystick';
+      }
+    }).catch(() => {
+      modeText.textContent = 'Gyroscope unavailable — using joystick';
+    });
+  } else {
+    // No permission API — just try listening directly (Android Chrome path).
+    permBtn.style.display = 'none';
+    enableGyro();
+  }
+}
+
+function setupGyroOrJoystick() {
+  if (typeof DeviceOrientationEvent === 'undefined') {
+    state.usingGyro = false;
+    updateModeUI();
+    return;
+  }
+
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    // iOS-style: must show a button, can't auto-request.
+    permBtn.style.display = 'block';
+    permBtn.textContent = 'Enable Gyroscope Access';
+    permBtn.addEventListener('click', requestMotionPermission);
+    state.usingGyro = false;
+    updateModeUI();
+  } else if (isMobileUA()) {
+    // Android Chrome etc: try directly, but also surface a manual button
+    // in case the silent attempt yields null data (common cause of "doesn't work").
+    enableGyro();
+    permBtn.style.display = 'block';
+    permBtn.textContent = 'Tap to Enable Motion';
+    permBtn.addEventListener('click', () => {
+      if (gyroWatchTimer) { clearTimeout(gyroWatchTimer); gyroWatchTimer = null; }
+      gyroConfirmed = false;
+      enableGyro();
+    });
+  } else {
+    state.usingGyro = false;
+    updateModeUI();
+  }
+}
+setupGyroOrJoystick();
+
+/* ============================================================
+   VIRTUAL JOYSTICK (mouse + touch)
+============================================================ */
+let joyActive = false;
+const JOY_RADIUS = 35; // max knob travel in px
+
+function resetJoystickKnob() {
+  joystickKnob.style.transform = 'translate(0px, 0px)';
+}
+
+function setJoyTarget(dx, dy) {
+  // dx, dy normalized -1..1
+  state.targetX = -dy * MAX_TILT * state.sensitivity; // up/down -> rotateX
+  state.targetY = dx * MAX_TILT * state.sensitivity;  // left/right -> rotateY
+}
+
+function joyPointerDown(e) {
+  joyActive = true;
+  movePointer(e);
+}
+function joyPointerMove(e) {
+  if (!joyActive) return;
+  movePointer(e);
+}
+function joyPointerUp() {
+  joyActive = false;
+  resetJoystickKnob();
+  state.targetX = 0;
+  state.targetY = 0;
+}
+
+function movePointer(e) {
+  const rect = joystickWrap.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const point = e.touches ? e.touches[0] : e;
+  let dx = point.clientX - cx;
+  let dy = point.clientY - cy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  if (dist > JOY_RADIUS) {
+    dx = (dx / dist) * JOY_RADIUS;
+    dy = (dy / dist) * JOY_RADIUS;
+  }
+  joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  setJoyTarget(dx / JOY_RADIUS, dy / JOY_RADIUS);
+}
+
+joystickWrap.addEventListener('mousedown', joyPointerDown);
+window.addEventListener('mousemove', joyPointerMove);
+window.addEventListener('mouseup', joyPointerUp);
+joystickWrap.addEventListener('touchstart', joyPointerDown, { passive: true });
+joystickWrap.addEventListener('touchmove', joyPointerMove, { passive: true });
+joystickWrap.addEventListener('touchend', joyPointerUp);
+
+/* Desktop fallback: if no joystick interaction & not mobile, also allow
+   moving mouse anywhere on screen as a gentle parallax (optional nicety),
+   but joystick remains the primary authoritative control. */
+window.addEventListener('mousemove', (e) => {
+  if (joyActive || state.usingGyro) return;
+  if (isMobileUA()) return; // mobile uses gyro or explicit joystick
+  // very subtle ambient parallax from full-window mouse position when joystick idle
+  const nx = (e.clientX / window.innerWidth) * 2 - 1;
+  const ny = (e.clientY / window.innerHeight) * 2 - 1;
+  state.targetX = -ny * (MAX_TILT * 0.35) * state.sensitivity;
+  state.targetY = nx * (MAX_TILT * 0.35) * state.sensitivity;
+});
+
+/* ============================================================
+   MAIN RENDER LOOP — interpolation, floating, shadow, reflection
+============================================================ */
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function tick() {
+  state.t += 0.016;
+
+  // smooth interpolation toward target tilt (no snapping)
+  state.curX = lerp(state.curX, state.targetX, 0.08);
+  state.curY = lerp(state.curY, state.targetY, 0.08);
+
+  // breathing / floating motion (independent of tilt)
+  const floatY   = Math.sin(state.t * 0.6) * 10 * state.floatIntensity;
+  const breatheZ = Math.sin(state.t * 0.4) * 14 * state.floatIntensity;
+  const driftRot = Math.sin(state.t * 0.25) * 1.4 * state.floatIntensity;
+
+  // compose final transform
+  const rotX = state.curX;
+  const rotY = state.curY;
+
+  cardWrap.style.transform =
+    `translateY(${floatY}px) translateZ(${40 + breatheZ}px) ` +
+    `rotateX(${rotX}deg) rotateY(${rotY + driftRot}deg)`;
+
+  // shadow moves opposite the tilt, scales with forward/back depth
+  const shadowX = -rotY * 2.2 * state.shadowStrength;
+  const shadowY = rotX * 1.4 * state.shadowStrength + 4;
+  const shadowScale = 1 - (breatheZ / 300) - (Math.abs(rotX) + Math.abs(rotY)) * 0.004;
+  const shadowBlur = 18 + Math.abs(breatheZ) * 0.3;
+  shadowBlob.style.transform = `translate(${shadowX}px, ${shadowY}px) scale(${Math.max(0.7, shadowScale)})`;
+  shadowBlob.style.filter = `blur(${shadowBlur}px)`;
+  shadowBlob.style.opacity = (0.55 * state.shadowStrength).toFixed(2);
+
+  // glossy reflection sweep, follows tilt like light on glass
+  const reflX = rotY * 3;
+  const reflY = rotX * 3;
+  reflection.style.transform = `translate(${reflX}px, ${reflY}px) rotate(${rotY * 0.5}deg)`;
+
+  requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+
+/* ============================================================
+   IMAGE UPLOAD
+============================================================ */
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    albumArt.src = ev.target.result;
+    albumArt.onload = () => {
+      placeholder.style.opacity = '0';
+      albumArt.classList.add('loaded');
+      glow.classList.add('active');
+    };
+  };
+  reader.readAsDataURL(file);
+});
+
+/* ============================================================
+   RESET
+============================================================ */
+resetBtn.addEventListener('click', () => {
+  // restore default album (placeholder)
+  albumArt.classList.remove('loaded');
+  albumArt.removeAttribute('src');
+  placeholder.style.opacity = '1';
+  glow.classList.remove('active');
+
+  // restore camera / tilt
+  state.targetX = 0; state.targetY = 0;
+  state.curX = 0; state.curY = 0;
+
+  // restore joystick position
+  resetJoystickKnob();
+
+  // restore sliders to defaults
+  sensSlider.value = 1; state.sensitivity = 1; valSens.textContent = '1.00';
+  floatSlider.value = 1; state.floatIntensity = 1; valFloat.textContent = '1.00';
+  perspSlider.value = 1000; state.perspective = 1000; valPersp.textContent = '1000';
+  stage.style.perspective = '1000px';
+  shadowSlider.value = 1; state.shadowStrength = 1; valShadow.textContent = '1.00';
+
+  // restore force desktop toggle
+  state.forceDesktop = false;
+  forceSwitch.classList.remove('on');
+  updateModeUI();
+});
+
+/* initial perspective */
+stage.style.perspective = state.perspective + 'px';
+</script>
+</body>
+</html>
